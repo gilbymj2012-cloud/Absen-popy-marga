@@ -1,0 +1,366 @@
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#7028d9">
+<title>Lanks Absen</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#f6f2fc;color:#28183a;font:16px Arial,sans-serif}
+header{background:#7028d9;color:white;padding:22px}
+header h1{margin:0 0 5px}
+main{max-width:650px;margin:20px auto;padding:0 14px}
+.card{background:white;border-radius:15px;padding:18px;margin-bottom:16px;box-shadow:0 4px 18px #32105012}
+h2{font-size:19px;margin-top:0}
+label{display:block;font-size:14px;margin:12px 0 6px}
+input,textarea,select,button{width:100%;padding:12px;border-radius:10px;font:inherit}
+input,textarea,select{border:1px solid #d9cce9;background:white}
+button{border:0;background:#7028d9;color:white;font-weight:bold;margin-top:12px;cursor:pointer}
+button.secondary{background:#eee5fa;color:#4f168f}
+button:disabled{opacity:.55}
+.hidden{display:none!important}
+.muted{font-size:13px;color:#71647c;line-height:1.5}
+.status{white-space:pre-wrap;overflow-wrap:anywhere;background:#f0e7fc}
+.item{border-top:1px solid #eee;padding:12px 0;overflow-wrap:anywhere}
+.item img{display:block;width:100%;max-width:320px;border-radius:10px;margin-top:10px}
+</style>
+</head>
+<body>
+<header>
+<h1>💜 Lanks Absen</h1>
+<div>Absensi online pegawai</div>
+</header>
+
+<main>
+<div id="status" class="card status">Memulai aplikasi...</div>
+
+<section id="auth" class="card hidden">
+<h2>Login / Daftar</h2>
+<label for="fullname">Nama lengkap (untuk daftar)</label>
+<input id="fullname" autocomplete="name" placeholder="Nama lengkap">
+<label for="email">Email</label>
+<input id="email" type="email" autocomplete="email" placeholder="nama@gmail.com">
+<label for="password">Password</label>
+<input id="password" type="password" autocomplete="current-password" placeholder="Minimal 6 karakter">
+<button id="loginBtn" type="button">Login</button>
+<button id="registerBtn" type="button" class="secondary">Daftar akun baru</button>
+<p class="muted">Gunakan email dan password akun Lanks Absen.</p>
+</section>
+
+<section id="app" class="hidden">
+<div class="card">
+<h2 id="welcome">Selamat datang</h2>
+<p id="roleText" class="muted"></p>
+<button id="logoutBtn" class="secondary" type="button">Keluar</button>
+</div>
+
+<div class="card">
+<h2>Catat Absensi</h2>
+<label for="kind">Jenis absensi</label>
+<select id="kind">
+<option value="masuk">Absen masuk</option>
+<option value="pulang">Absen pulang</option>
+</select>
+<label for="note">Catatan (opsional)</label>
+<textarea id="note" rows="2" placeholder="Catatan"></textarea>
+<label for="photo">Foto bukti absensi</label>
+<input id="photo" type="file" accept="image/*" capture="environment">
+<p class="muted">Ukuran foto maksimal 5 MB.</p>
+<button id="submitBtn" type="button">Kirim Absensi</button>
+</div>
+
+<div class="card">
+<h2>Riwayat Absensi Saya</h2>
+<div id="mine" class="muted">Memuat...</div>
+</div>
+
+<div id="adminCard" class="card hidden">
+<h2>Panel Admin</h2>
+<button id="refreshAdmin" class="secondary" type="button">Muat ulang data</button>
+<div id="allRecords"></div>
+</div>
+</section>
+</main>
+
+<script type="module">
+import { createClient } from
+"https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
+
+const SUPABASE_URL = "https://qwxcpbnpzbjayojrtfum.supabase.co";
+const SUPABASE_KEY = "sb_publishable_SrZiE_28t7etIKjvZNHQBA_W37RFM5f";
+const BUCKET = "foto-absensi";
+
+const $ = id => document.getElementById(id);
+let client;
+let currentUser = null;
+let currentProfile = null;
+let busy = false;
+
+function message(text) {
+  $("status").textContent = text;
+  $("status").classList.remove("hidden");
+}
+function show(id, visible) {
+  $(id).classList.toggle("hidden", !visible);
+}
+function errorMessage(error) {
+  return error?.message || String(error || "Kesalahan tidak diketahui");
+}
+function setBusy(button, value) {
+  if (value) {
+    button.dataset.originalText = button.textContent;
+    button.disabled = true;
+    button.textContent = "Memproses...";
+  } else {
+    button.disabled = false;
+    button.textContent =
+      button.dataset.originalText || button.textContent;
+  }
+}
+function formatDate(value) {
+  return new Date(value).toLocaleString("id-ID", {
+    dateStyle:"medium", timeStyle:"short"
+  });
+}
+
+/* LOGIN */
+async function loginAkun() {
+  const email = $("email").value.trim();
+  const password = $("password").value;
+  if (!email || !password)
+    throw Error("Masukkan email dan password.");
+
+  const {error} = await client.auth.signInWithPassword({
+    email,password
+  });
+  if (error) throw error;
+  await refreshApp();
+}
+
+/* DAFTAR AKUN */
+async function daftarAkun() {
+  const email = $("email").value.trim();
+  const password = $("password").value;
+  const nama = $("fullname").value.trim();
+
+  if (!email || !password || !nama)
+    throw Error("Isi nama lengkap, email, dan password.");
+  if (password.length < 6)
+    throw Error("Password minimal 6 karakter.");
+
+  const {data,error} = await client.auth.signUp({
+    email,
+    password,
+    options:{data:{full_name:nama}}
+  });
+  if (error) throw error;
+
+  if (!data.session) {
+    message("Pendaftaran diterima. Periksa email untuk konfirmasi jika diminta. Jika belum bisa login, periksa pengaturan Confirm email di Supabase.");
+    return;
+  }
+  await refreshApp();
+}
+
+/* PERBAIKAN AUTH SESSION MISSING */
+async function refreshApp() {
+  const {data,error} = await client.auth.getSession();
+  if (error) throw error;
+
+  currentUser = data.session?.user ?? null;
+  show("auth",!currentUser);
+  show("app",!!currentUser);
+
+  if (!currentUser) {
+    currentProfile = null;
+    message("Silakan login atau daftar akun.");
+    return;
+  }
+
+  const {data:profile,error:profileError} = await client
+    .from("profiles")
+    .select("id,full_name,role")
+    .eq("id",currentUser.id)
+    .single();
+
+  if (profileError) {
+    message("Login berhasil, tetapi profil gagal dibaca: " +
+      errorMessage(profileError) +
+      "\nPeriksa tabel profiles dan trigger Supabase.");
+    return;
+  }
+
+  currentProfile = profile;
+  $("welcome").textContent =
+    "Halo, " + (profile.full_name || currentUser.email);
+  $("roleText").textContent = "Peran: " + profile.role;
+  show("adminCard",profile.role === "admin");
+
+  message("Berhasil login.");
+  await muatRiwayat(true);
+  if (profile.role === "admin") await muatRiwayat(false);
+}
+
+/* RIWAYAT ABSENSI */
+async function muatRiwayat(hanyaSaya) {
+  const container = $(hanyaSaya ? "mine" : "allRecords");
+  container.textContent = "Memuat data...";
+
+  let query = client.from("attendance")
+    .select("id,user_id,full_name,attendance_type,note,photo_path,created_at")
+    .order("created_at",{ascending:false})
+    .limit(100);
+
+  if (hanyaSaya) query = query.eq("user_id",currentUser.id);
+
+  const {data,error} = await query;
+  if (error) {
+    container.textContent = "Gagal memuat data: " + errorMessage(error);
+    return;
+  }
+  if (!data?.length) {
+    container.textContent = "Belum ada data absensi.";
+    return;
+  }
+
+  container.replaceChildren();
+
+  for (const record of data) {
+    const item = document.createElement("div");
+    item.className = "item";
+
+    const title = document.createElement("strong");
+    title.textContent =
+      record.full_name + " — " + record.attendance_type;
+
+    const date = document.createElement("p");
+    date.className = "muted";
+    date.textContent = formatDate(record.created_at);
+
+    const note = document.createElement("p");
+    note.textContent = record.note || "Tanpa catatan";
+
+    item.append(title,date,note);
+    container.append(item);
+
+    if (record.photo_path) {
+      const {data:signed,error:photoError} = await client.storage
+        .from(BUCKET).createSignedUrl(record.photo_path,300);
+
+      if (!photoError && signed?.signedUrl) {
+        const img = document.createElement("img");
+        img.src = signed.signedUrl;
+        img.alt = "Foto bukti absensi";
+        img.loading = "lazy";
+        item.append(img);
+      }
+    }
+  }
+}
+
+/* ABSENSI DAN UPLOAD FOTO */
+async function kirimAbsensi() {
+  if (!currentUser || !currentProfile)
+    throw Error("Profil belum siap. Coba login kembali.");
+
+  const file = $("photo").files?.[0];
+  if (!file) throw Error("Pilih foto terlebih dahulu.");
+  if (!file.type.startsWith("image/"))
+    throw Error("File harus berupa gambar.");
+  if (file.size > 5*1024*1024)
+    throw Error("Ukuran foto maksimal 5 MB.");
+
+  const ext = (file.name.split(".").pop() || "jpg")
+    .toLowerCase().replace(/[^a-z0-9]/g,"") || "jpg";
+  const path = currentUser.id + "/" +
+    crypto.randomUUID() + "." + ext;
+
+  const {error:uploadError} = await client.storage.from(BUCKET)
+    .upload(path,file,{contentType:file.type,upsert:false});
+
+  if (uploadError)
+    throw Error("Foto gagal diunggah: " + errorMessage(uploadError));
+
+  const {error:insertError} = await client.from("attendance").insert({
+    user_id:currentUser.id,
+    full_name:currentProfile.full_name || currentUser.email,
+    attendance_type:$("kind").value,
+    note:$("note").value.trim(),
+    photo_path:path
+  });
+
+  if (insertError) {
+    await client.storage.from(BUCKET).remove([path]);
+    throw Error("Data absensi gagal disimpan: " + errorMessage(insertError));
+  }
+
+  $("photo").value = "";
+  $("note").value = "";
+  message("Absensi berhasil disimpan online.");
+  await muatRiwayat(true);
+  if (currentProfile.role === "admin") await muatRiwayat(false);
+}
+
+async function runAction(button,action) {
+  if (busy) return;
+  busy = true;
+  setBusy(button,true);
+  try {
+    await action();
+  } catch (error) {
+    message("Terjadi kesalahan: " + errorMessage(error));
+  } finally {
+    setBusy(button,false);
+    busy = false;
+  }
+}
+
+/* TOMBOL */
+$("loginBtn").addEventListener("click",() =>
+  runAction($("loginBtn"),loginAkun));
+
+$("registerBtn").addEventListener("click",() =>
+  runAction($("registerBtn"),daftarAkun));
+
+$("submitBtn").addEventListener("click",() =>
+  runAction($("submitBtn"),kirimAbsensi));
+
+$("logoutBtn").addEventListener("click",() =>
+  runAction($("logoutBtn"),async() => {
+    const {error} = await client.auth.signOut();
+    if (error) throw error;
+    currentUser = null;
+    currentProfile = null;
+    await refreshApp();
+  }));
+
+$("refreshAdmin").addEventListener("click",() =>
+  runAction($("refreshAdmin"),async() => {
+    if (currentProfile?.role !== "admin")
+      throw Error("Akses admin tidak tersedia.");
+    await muatRiwayat(false);
+  }));
+
+/* MULAI APLIKASI */
+async function start() {
+  try {
+    client = createClient(SUPABASE_URL,SUPABASE_KEY);
+    await refreshApp();
+
+    client.auth.onAuthStateChange(() => {
+      setTimeout(() => {
+        refreshApp().catch(error =>
+          message("Gagal memuat akun: " + errorMessage(error)));
+      },0);
+    });
+  } catch (error) {
+    message("Aplikasi gagal dimulai: " + errorMessage(error));
+  }
+}
+
+start();
+</script>
+</body>
+</html>
